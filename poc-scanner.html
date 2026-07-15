@@ -107,6 +107,10 @@
     <canvas id="overlay" class="overlay"></canvas>
     <div id="startOverlay">
       <p>Esta pantalla activa la cámara trasera y detecta las tarjetas ArUco en tiempo real, mostrando el ID, el ángulo de rotación y la letra (A/B/C/D) resultante. Sirve para validar la detección antes de construir el resto de la app.</p>
+      <div>
+        <label for="maxStudents" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">¿Cuántas tarjetas imprimiste para esta prueba?</label>
+        <input type="number" id="maxStudents" value="10" min="1" max="100" style="background:var(--panel);border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:6px;font-size:14px;width:80px;text-align:center;">
+      </div>
       <button id="startBtn">Activar cámara</button>
     </div>
   </div>
@@ -151,13 +155,17 @@ const fpsEl = document.getElementById('fps');
 
 const ANGLE_TO_LETTER = { 0: 'A', 90: 'B', 180: 'C', 270: 'D' };
 const STABILITY_FRAMES_REQUIRED = 6; // cuántos frames consecutivos iguales para "confirmar" una lectura
+const DETECTION_WIDTH = 800;  // resolución reducida solo para el análisis (no afecta lo que se ve en pantalla)
+const DETECTION_HEIGHT = 450;
 
+let MAX_VALID_ID = 9; // se ajusta con el campo "Cuántas tarjetas" al iniciar (idx 0..N-1)
 let detector = null;
 let workCanvas = null;
 let workCtx = null;
 let running = false;
 let lastFrameTime = performance.now();
 let fpsSmooth = 0;
+let lastRenderSignature = '';
 
 // Estado de estabilidad por marcador: { id: { letter, count } }
 const stability = {};
@@ -184,6 +192,9 @@ function centerOf(corners){
 
 async function startCamera(){
   try{
+    const qtyInput = parseInt(document.getElementById('maxStudents').value, 10);
+    MAX_VALID_ID = (Number.isFinite(qtyInput) && qtyInput > 0 ? qtyInput : 10) - 1;
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
@@ -191,15 +202,20 @@ async function startCamera(){
     video.srcObject = stream;
     await video.play();
 
+    // El canvas de ANÁLISIS se mantiene en baja resolución (más rápido de procesar por frame).
+    // El <video> visible sigue en resolución completa, solo el análisis interno se reduce.
     workCanvas = document.createElement('canvas');
-    workCanvas.width = video.videoWidth || 1280;
-    workCanvas.height = video.videoHeight || 720;
+    workCanvas.width = DETECTION_WIDTH;
+    workCanvas.height = DETECTION_HEIGHT;
     workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
 
-    overlay.width = workCanvas.width;
-    overlay.height = workCanvas.height;
+    overlay.width = DETECTION_WIDTH;
+    overlay.height = DETECTION_HEIGHT;
 
-    detector = new AR.Detector({ dictionaryName: 'ARUCO_MIP_36h12' });
+    // maxHammingDistance más estricto (por defecto ronda 12 en este diccionario) para
+    // rechazar coincidencias "aproximadas" con texto/íconos de la pantalla que no son
+    // tarjetas reales. Con tarjetas impresas y buena luz, 4 sigue siendo tolerante.
+    detector = new AR.Detector({ dictionaryName: 'ARUCO_MIP_36h12', maxHammingDistance: 4 });
 
     startOverlay.style.display = 'none';
     running = true;
@@ -214,9 +230,9 @@ function loop(){
 
   workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
   const imageData = workCtx.getImageData(0, 0, workCanvas.width, workCanvas.height);
-  const markers = detector.detect(imageData);
+  const rawMarkers = detector.detect(imageData);
+  const markers = processMarkers(rawMarkers); // ya filtrado por rango válido
 
-  processMarkers(markers);
   drawOverlay(markers);
   renderList();
   tickFps();
@@ -224,7 +240,11 @@ function loop(){
   requestAnimationFrame(loop);
 }
 
-function processMarkers(markers){
+function processMarkers(rawMarkers){
+  // Descarta cualquier ID fuera del rango de tarjetas que realmente imprimiste.
+  // Esto elimina los falsos positivos (ej. #245, #105) que vienen de texto/íconos
+  // en pantalla que por casualidad se parecen a un patrón válido del diccionario.
+  const markers = rawMarkers.filter(m => m.id >= 0 && m.id <= MAX_VALID_ID);
   const seenNow = new Set();
 
   markers.forEach(m => {
@@ -270,6 +290,8 @@ function processMarkers(markers){
       delete stability[id];
     }
   });
+
+  return markers;
 }
 
 function drawOverlay(markers){
@@ -303,7 +325,15 @@ function drawOverlay(markers){
 }
 
 function renderList(){
-  const ids = Object.keys(confirmed);
+  const ids = Object.keys(confirmed).sort((a, b) => Number(a) - Number(b));
+
+  // Firma corta del contenido actual: si es idéntica a la del último render,
+  // no tocamos el DOM. Esto es lo que elimina el parpadeo — antes se
+  // reconstruía la lista hasta 30 veces por segundo aunque nada cambiara.
+  const signature = ids.map(id => `${id}:${confirmed[id].letter}:${confirmed[id].stable ? 1 : 0}`).join('|');
+  if (signature === lastRenderSignature) return;
+  lastRenderSignature = signature;
+
   if (ids.length === 0){
     detectionsEl.innerHTML = '';
     detectionsEl.appendChild(emptyState);
@@ -311,7 +341,6 @@ function renderList(){
   }
 
   const rows = ids
-    .sort((a, b) => Number(a) - Number(b))
     .map(id => {
       const d = confirmed[id];
       const stabilityLabel = d.stable ? 'ESTABLE' : 'leyendo…';
