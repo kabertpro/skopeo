@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestión · Skopeo</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .tabs{display:flex;gap:6px;margin:18px 0 16px;border-bottom:1px solid var(--line);}
+  .tab{
+    padding:9px 4px;font-size:13px;color:var(--muted);cursor:pointer;
+    border-bottom:2px solid transparent;margin-bottom:-1px;
+  }
+  .tab.active{color:var(--text);border-bottom-color:var(--accent);}
+  .tab-panel{display:none;}
+  .tab-panel.active{display:block;}
+
+  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+  .row .field{flex:1;min-width:180px;margin-bottom:0;}
+
+  .list-item{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;
+    background:var(--panel-2);
+  }
+  .list-item .info{flex:1;min-width:0;}
+  .list-item .info b{font-size:13px;}
+  .list-item .info .meta{font-size:11px;color:var(--muted);margin-top:2px;}
+  .list-item .actions{display:flex;gap:6px;flex-shrink:0;}
+  .list-item .actions button{padding:6px 10px;font-size:12px;}
+
+  #importResult{margin-top:10px;font-size:12px;}
+  #importResult .ok{color:var(--accent);}
+  #importResult .err{color:var(--danger);}
+
+  select#cursoSelect{min-width:220px;}
+  #sinCurso{color:var(--muted);font-size:13px;padding:30px 0;text-align:center;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Skop<span>eo</span> · Gestión</h1>
+  <nav>
+    <a href="index.html">Inicio</a>
+    <a href="gestion.html" class="active">Gestión</a>
+    <a href="presentar.html">Presentar</a>
+    <a href="escanear.html">Escanear</a>
+    <a href="resultados.html">Resultados</a>
+  </nav>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label>Curso activo</label>
+        <select id="cursoSelect"></select>
+      </div>
+      <button class="btn-outline btn" id="nuevoCursoBtn" style="padding:10px 14px;">+ Nuevo curso</button>
+    </div>
+    <div id="nuevoCursoForm" style="display:none;margin-top:12px;">
+      <div class="row">
+        <div class="field">
+          <label>Nombre del curso (ej. "3ro Sec A")</label>
+          <input type="text" id="nuevoCursoNombre">
+        </div>
+        <button class="btn" id="guardarCursoBtn">Crear</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sinCurso" style="display:none;">Crea o selecciona un curso para continuar.</div>
+
+  <div id="cursoContent" style="display:none;">
+    <div class="tabs">
+      <div class="tab active" data-tab="estudiantes">Estudiantes</div>
+      <div class="tab" data-tab="evaluaciones">Evaluaciones</div>
+    </div>
+
+    <!-- ================= ESTUDIANTES ================= -->
+    <div class="tab-panel active" id="panel-estudiantes">
+      <div class="card" style="margin-bottom:16px;">
+        <div class="field">
+          <label>Importar estudiantes desde texto — formato: <span class="mono">1. Nombre Apellido</span> (el número debe coincidir con el N° de la tarjeta ArUco)</label>
+          <textarea id="estudiantesTxt" rows="6" placeholder="1. Pedro Mamani Condori&#10;2. José Álvarez Espejo"></textarea>
+        </div>
+        <button class="btn" id="importarEstudiantesBtn">Importar / Actualizar lista</button>
+        <div id="importResult"></div>
+      </div>
+
+      <div id="listaEstudiantes"></div>
+    </div>
+
+    <!-- ================= EVALUACIONES ================= -->
+    <div class="tab-panel" id="panel-evaluaciones">
+      <div class="card" style="margin-bottom:16px;">
+        <div class="field">
+          <label>Título de la evaluación</label>
+          <input type="text" id="evalTitulo" placeholder="Ej. Evaluación Capítulo 3">
+        </div>
+        <div class="field">
+          <label>Preguntas — formato: <span class="mono">1. Pregunta</span> / <span class="mono">A. Opción</span> (agrega "R" al final de la opción correcta)</label>
+          <textarea id="preguntasTxt" rows="10" placeholder="1. ¿Cuál es la capital de Bolivia?&#10;A. La Paz&#10;B. Sucre R&#10;C. Cochabamba&#10;D. Santa Cruz"></textarea>
+        </div>
+        <button class="btn" id="crearEvaluacionBtn">Crear evaluación</button>
+        <div id="evalImportResult"></div>
+      </div>
+
+      <div id="listaEvaluaciones"></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/credits.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/db.js"></script>
+<script src="js/parsers.js"></script>
+<script>
+let cursos = [];
+let cursoActualId = localStorage.getItem('skopeo_curso_actual') || null;
+
+const cursoSelect = document.getElementById('cursoSelect');
+const cursoContent = document.getElementById('cursoContent');
+const sinCurso = document.getElementById('sinCurso');
+
+async function cargarCursos(){
+  const { data, error } = await SkopeoDB.getCursos();
+  if (error){ alert('Error cargando cursos: ' + error.message); return; }
+  cursos = data || [];
+
+  cursoSelect.innerHTML = cursos.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+
+  if (cursos.length === 0){
+    cursoContent.style.display = 'none';
+    sinCurso.style.display = 'block';
+    return;
+  }
+
+  if (!cursoActualId || !cursos.find(c => c.id === cursoActualId)){
+    cursoActualId = cursos[0].id;
+  }
+  cursoSelect.value = cursoActualId;
+  sinCurso.style.display = 'none';
+  cursoContent.style.display = 'block';
+  await cargarEstudiantes();
+  await cargarEvaluaciones();
+}
+
+cursoSelect.addEventListener('change', async () => {
+  cursoActualId = cursoSelect.value;
+  localStorage.setItem('skopeo_curso_actual', cursoActualId);
+  await cargarEstudiantes();
+  await cargarEvaluaciones();
+});
+
+document.getElementById('nuevoCursoBtn').addEventListener('click', () => {
+  const form = document.getElementById('nuevoCursoForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('guardarCursoBtn').addEventListener('click', async () => {
+  const nombre = document.getElementById('nuevoCursoNombre').value.trim();
+  if (!nombre) return;
+  const { data, error } = await SkopeoDB.crearCurso(nombre);
+  if (error){ alert('Error: ' + error.message); return; }
+  document.getElementById('nuevoCursoNombre').value = '';
+  document.getElementById('nuevoCursoForm').style.display = 'none';
+  cursoActualId = data.id;
+  localStorage.setItem('skopeo_curso_actual', cursoActualId);
+  await cargarCursos();
+});
+
+// ---------------- TABS ----------------
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ---------------- ESTUDIANTES ----------------
+async function cargarEstudiantes(){
+  const { data, error } = await SkopeoDB.getEstudiantes(cursoActualId);
+  const cont = document.getElementById('listaEstudiantes');
+  if (error){ cont.innerHTML = `<p class="muted">Error: ${error.message}</p>`; return; }
+
+  if (!data || data.length === 0){
+    cont.innerHTML = '<p class="muted">Sin estudiantes importados todavía.</p>';
+    return;
+  }
+
+  cont.innerHTML = data.map(e => `
+    <div class="list-item">
+      <div class="info">
+        <b>N° ${e.numero} — ${escapeHtml(e.nombre)}</b>
+      </div>
+      <div class="actions">
+        <button class="btn-danger btn" onclick="eliminarEstudiante('${e.id}')">Eliminar</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function eliminarEstudiante(id){
+  if (!confirm('¿Eliminar este estudiante? Esto no borra sus respuestas ya registradas.')) return;
+  const { error } = await SkopeoDB.eliminarEstudiante(id);
+  if (error){ alert('Error: ' + error.message); return; }
+  cargarEstudiantes();
+}
+
+document.getElementById('importarEstudiantesBtn').addEventListener('click', async () => {
+  const texto = document.getElementById('estudiantesTxt').value;
+  const { estudiantes, errores } = SkopeoParsers.parseEstudiantes(texto);
+  const resultEl = document.getElementById('importResult');
+
+  if (estudiantes.length === 0){
+    resultEl.innerHTML = `<span class="err">No se reconoció ningún estudiante válido.</span>`;
+    return;
+  }
+
+  const { data, error } = await SkopeoDB.importarEstudiantes(cursoActualId, estudiantes);
+  if (error){
+    resultEl.innerHTML = `<span class="err">Error guardando: ${error.message}</span>`;
+    return;
+  }
+
+  let html = `<span class="ok">${data.length} estudiantes importados/actualizados correctamente.</span>`;
+  if (errores.length > 0){
+    html += `<br><span class="err">Avisos:</span><ul>${errores.map(e => `<li class="err">${escapeHtml(e)}</li>`).join('')}</ul>`;
+  }
+  resultEl.innerHTML = html;
+  document.getElementById('estudiantesTxt').value = '';
+  cargarEstudiantes();
+});
+
+// ---------------- EVALUACIONES ----------------
+async function cargarEvaluaciones(){
+  const { data, error } = await SkopeoDB.getEvaluaciones(cursoActualId);
+  const cont = document.getElementById('listaEvaluaciones');
+  if (error){ cont.innerHTML = `<p class="muted">Error: ${error.message}</p>`; return; }
+
+  if (!data || data.length === 0){
+    cont.innerHTML = '<p class="muted">Sin evaluaciones creadas todavía.</p>';
+    return;
+  }
+
+  const badgeClass = { pendiente: 'badge-warn', en_curso: 'badge-accent', finalizada: '' };
+  const badgeLabel = { pendiente: 'PENDIENTE', en_curso: '🔴 EN CURSO', finalizada: 'FINALIZADA' };
+
+  cont.innerHTML = data.map(ev => `
+    <div class="list-item">
+      <div class="info">
+        <b>${escapeHtml(ev.titulo)}</b>
+        <div class="meta">
+          <span class="badge ${badgeClass[ev.estado]}">${badgeLabel[ev.estado]}</span>
+          · ${new Date(ev.creada_en).toLocaleDateString('es-BO')}
+        </div>
+      </div>
+      <div class="actions">
+        ${ev.estado === 'pendiente' ? `<button class="btn" onclick="irAPresentar('${ev.id}')">Iniciar LIVE</button>` : ''}
+        ${ev.estado === 'en_curso' ? `<button class="btn" onclick="irAPresentar('${ev.id}')">Reabrir presentación</button>` : ''}
+        ${ev.estado === 'finalizada' ? `<button class="btn-outline btn" onclick="location.href='resultados.html?eval=${ev.id}'">Ver resultados</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function irAPresentar(evaluacionId){
+  location.href = `presentar.html?eval=${evaluacionId}`;
+}
+
+document.getElementById('crearEvaluacionBtn').addEventListener('click', async () => {
+  const titulo = document.getElementById('evalTitulo').value.trim();
+  const texto = document.getElementById('preguntasTxt').value;
+  const resultEl = document.getElementById('evalImportResult');
+
+  if (!titulo){
+    resultEl.innerHTML = `<span class="err">Ponle un título a la evaluación.</span>`;
+    return;
+  }
+
+  const { preguntas, errores } = SkopeoParsers.parsePreguntas(texto);
+
+  if (errores.length > 0){
+    resultEl.innerHTML = `<span class="err">Corrige estos problemas antes de continuar:</span><ul>${errores.map(e => `<li class="err">${escapeHtml(e)}</li>`).join('')}</ul>`;
+    return;
+  }
+  if (preguntas.length === 0){
+    resultEl.innerHTML = `<span class="err">No se reconoció ninguna pregunta.</span>`;
+    return;
+  }
+
+  const { data, error } = await SkopeoDB.crearEvaluacion(cursoActualId, titulo, preguntas);
+  if (error){
+    resultEl.innerHTML = `<span class="err">Error guardando: ${error.message}</span>`;
+    return;
+  }
+
+  resultEl.innerHTML = `<span class="ok">Evaluación creada con ${preguntas.length} preguntas.</span>`;
+  document.getElementById('evalTitulo').value = '';
+  document.getElementById('preguntasTxt').value = '';
+  cargarEvaluaciones();
+});
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+cargarCursos();
+</script>
+</body>
+</html>

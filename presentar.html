@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Presentar · Skopeo</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  body{overflow-x:hidden;}
+  .layout{
+    display:grid;grid-template-columns:1fr 320px;gap:0;
+    height:calc(100vh - 53px);
+  }
+  @media (max-width:800px){
+    .layout{grid-template-columns:1fr;height:auto;}
+  }
+
+  .stage{
+    padding:36px 40px;display:flex;flex-direction:column;
+    justify-content:center;min-height:60vh;
+  }
+  .progress{font-size:13px;color:var(--muted);margin-bottom:10px;font-family:var(--mono);}
+  .question-text{font-size:clamp(22px,3.4vw,40px);font-weight:800;line-height:1.25;margin:0 0 30px;}
+  .options{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media (max-width:600px){.options{grid-template-columns:1fr;}}
+  .option{
+    display:flex;align-items:center;gap:14px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;font-size:clamp(15px,1.6vw,20px);font-weight:600;
+  }
+  .option .letter{
+    width:38px;height:38px;flex-shrink:0;border-radius:8px;
+    display:flex;align-items:center;justify-content:center;font-weight:800;
+    background:var(--accent-dim);color:var(--accent);font-size:16px;
+  }
+  .option-A .letter{background:#1f4b3d;color:#4fd1a5;}
+  .option-B .letter{background:#1f2e4b;color:#4f8fd1;}
+  .option-C .letter{background:#4b3d1f;color:#d1a54f;}
+  .option-D .letter{background:#4b1f2e;color:#d14f7f;}
+
+  .stage-controls{
+    display:flex;gap:10px;margin-top:32px;align-items:center;flex-wrap:wrap;
+  }
+  .live-badge{
+    display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;
+    color:#ff6b6b;letter-spacing:.05em;
+  }
+  .live-dot{width:8px;height:8px;border-radius:50%;background:#ff6b6b;animation:blink 1.2s infinite;}
+  @keyframes blink{50%{opacity:.2;}}
+
+  .sidebar{
+    border-left:1px solid var(--line);background:var(--panel-2);
+    padding:20px 16px;overflow-y:auto;
+  }
+  @media (max-width:800px){.sidebar{border-left:none;border-top:1px solid var(--line);}}
+  .sidebar h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px;}
+  .stat-row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:16px;}
+  .stat-row b{color:var(--text);font-size:16px;}
+
+  .students-grid{display:flex;flex-direction:column;gap:6px;}
+  .student{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:8px 10px;border-radius:8px;font-size:13px;
+    background:var(--panel);border:1px solid var(--line);color:var(--muted);
+    transition:all .2s;
+  }
+  .student.answered{
+    background:var(--accent-dim);border-color:#2a6650;color:var(--text);font-weight:600;
+  }
+  .student .letra-chip{
+    font-family:var(--mono);font-size:11px;font-weight:800;
+    background:rgba(0,0,0,0.25);padding:1px 7px;border-radius:4px;
+  }
+
+  #loadingState, #errorState{
+    display:flex;align-items:center;justify-content:center;height:70vh;
+    color:var(--muted);font-size:14px;text-align:center;padding:20px;flex-direction:column;gap:12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Skop<span>eo</span> · Presentar</h1>
+  <nav>
+    <a href="index.html">Inicio</a>
+    <a href="gestion.html">Gestión</a>
+    <a href="presentar.html" class="active">Presentar</a>
+    <a href="resultados.html">Resultados</a>
+  </nav>
+</div>
+
+<div id="loadingState">Cargando evaluación…</div>
+<div id="errorState" style="display:none;"></div>
+
+<div class="layout" id="mainLayout" style="display:none;">
+  <div class="stage">
+    <div class="progress" id="progressLabel"></div>
+    <div class="question-text" id="questionText"></div>
+    <div class="options" id="optionsGrid"></div>
+    <div class="stage-controls">
+      <span class="live-badge" id="liveBadge" style="display:none;"><span class="live-dot"></span> LIVE</span>
+      <button class="btn" id="iniciarBtn" style="display:none;">Iniciar LIVE</button>
+      <button class="btn" id="siguienteBtn" style="display:none;">Siguiente pregunta →</button>
+      <button class="btn-danger btn" id="finalizarBtn" style="display:none;">Finalizar evaluación</button>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="stat-row">
+      <div>Respondieron<br><b id="statRespondieron">0</b></div>
+      <div>Total<br><b id="statTotal">0</b></div>
+    </div>
+    <h3>Estudiantes</h3>
+    <div class="students-grid" id="studentsGrid"></div>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/credits.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/db.js"></script>
+<script>
+let evaluacion = null;
+let preguntas = [];
+let estudiantes = [];
+let respuestasPreguntaActual = new Map(); // estudiante_id -> respuesta_elegida
+let channelRespuestas = null;
+let channelEvaluacion = null;
+
+function getEvalIdFromUrl(){
+  const params = new URLSearchParams(location.search);
+  return params.get('eval');
+}
+
+async function init(){
+  const evalId = getEvalIdFromUrl();
+
+  let res;
+  if (evalId){
+    res = await SkopeoDB.getEvaluacion(evalId);
+  } else {
+    res = await SkopeoDB.getEvaluacionActiva();
+    if (!res.error && !res.data){
+      mostrarError('No hay ninguna evaluación en curso ni se especificó una. Ve a Gestión y presiona "Iniciar LIVE" en la evaluación que quieras presentar.');
+      return;
+    }
+  }
+
+  if (res.error || !res.data){
+    mostrarError('No se pudo cargar la evaluación: ' + (res.error ? res.error.message : 'no encontrada'));
+    return;
+  }
+
+  evaluacion = res.data;
+
+  const [pregRes, estRes] = await Promise.all([
+    SkopeoDB.getPreguntas(evaluacion.id),
+    SkopeoDB.getEstudiantes(evaluacion.curso_id),
+  ]);
+
+  if (pregRes.error || estRes.error){
+    mostrarError('Error cargando datos: ' + ((pregRes.error || estRes.error).message));
+    return;
+  }
+
+  preguntas = pregRes.data;
+  estudiantes = estRes.data;
+
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('mainLayout').style.display = 'grid';
+
+  renderEstado();
+  suscribirTiempoReal();
+}
+
+function mostrarError(msg){
+  document.getElementById('loadingState').style.display = 'none';
+  const el = document.getElementById('errorState');
+  el.style.display = 'flex';
+  el.innerHTML = `<p>${escapeHtml(msg)}</p><a class="btn" href="gestion.html">Ir a Gestión</a>`;
+}
+
+function renderEstado(){
+  const iniciarBtn = document.getElementById('iniciarBtn');
+  const siguienteBtn = document.getElementById('siguienteBtn');
+  const finalizarBtn = document.getElementById('finalizarBtn');
+  const liveBadge = document.getElementById('liveBadge');
+
+  if (evaluacion.estado === 'pendiente'){
+    iniciarBtn.style.display = 'inline-flex';
+    siguienteBtn.style.display = 'none';
+    finalizarBtn.style.display = 'none';
+    liveBadge.style.display = 'none';
+    document.getElementById('questionText').textContent = 'Presiona "Iniciar LIVE" para comenzar.';
+    document.getElementById('optionsGrid').innerHTML = '';
+    document.getElementById('progressLabel').textContent = evaluacion.titulo;
+  } else if (evaluacion.estado === 'en_curso'){
+    iniciarBtn.style.display = 'none';
+    siguienteBtn.style.display = 'inline-flex';
+    finalizarBtn.style.display = 'inline-flex';
+    liveBadge.style.display = 'inline-flex';
+    renderPreguntaActual();
+  } else {
+    location.href = `resultados.html?eval=${evaluacion.id}`;
+  }
+
+  renderStudents();
+}
+
+function renderPreguntaActual(){
+  const preg = preguntas.find(p => p.orden === evaluacion.pregunta_actual_orden);
+  if (!preg) return;
+
+  document.getElementById('progressLabel').textContent =
+    `${evaluacion.titulo} · Pregunta ${preg.orden} de ${preguntas.length}`;
+  document.getElementById('questionText').textContent = preg.texto;
+  document.getElementById('optionsGrid').innerHTML = ['A','B','C','D'].map(letra => `
+    <div class="option option-${letra}">
+      <div class="letter">${letra}</div>
+      <div>${escapeHtml(preg['opcion_' + letra.toLowerCase()])}</div>
+    </div>
+  `).join('');
+
+  const esUltima = preg.orden >= preguntas.length;
+  document.getElementById('siguienteBtn').textContent = esUltima ? 'Finalizar y ver resultados →' : 'Siguiente pregunta →';
+
+  cargarRespuestasDePreguntaActual(preg.id);
+}
+
+async function cargarRespuestasDePreguntaActual(preguntaId){
+  respuestasPreguntaActual = new Map();
+  const { data, error } = await SkopeoDB.getRespuestasDePregunta(evaluacion.id, preguntaId);
+  if (!error && data){
+    data.forEach(r => respuestasPreguntaActual.set(r.estudiante_id, r.respuesta_elegida));
+  }
+  renderStudents();
+}
+
+function renderStudents(){
+  const grid = document.getElementById('studentsGrid');
+  const total = estudiantes.length;
+  const respondieron = respuestasPreguntaActual.size;
+
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statRespondieron').textContent = respondieron;
+
+  grid.innerHTML = estudiantes.map(e => {
+    const letra = respuestasPreguntaActual.get(e.id);
+    const answered = !!letra;
+    return `
+      <div class="student ${answered ? 'answered' : ''}">
+        <span>N°${e.numero} ${escapeHtml(e.nombre)}</span>
+        ${answered ? `<span class="letra-chip">${letra}</span>` : ''}
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('iniciarBtn').addEventListener('click', async () => {
+  const { data, error } = await SkopeoDB.iniciarEvaluacion(evaluacion.id);
+  if (error){ alert(error.message); return; }
+  evaluacion = data;
+  renderEstado();
+});
+
+document.getElementById('siguienteBtn').addEventListener('click', async () => {
+  const siguienteOrden = evaluacion.pregunta_actual_orden + 1;
+  if (siguienteOrden > preguntas.length){
+    await finalizarYRedirigir();
+    return;
+  }
+  const { data, error } = await SkopeoDB.avanzarPregunta(evaluacion.id, siguienteOrden);
+  if (error){ alert(error.message); return; }
+  evaluacion = data;
+  renderEstado();
+});
+
+document.getElementById('finalizarBtn').addEventListener('click', async () => {
+  if (!confirm('¿Finalizar la evaluación? Ya no se podrán registrar más respuestas.')) return;
+  await finalizarYRedirigir();
+});
+
+async function finalizarYRedirigir(){
+  const { error } = await SkopeoDB.finalizarEvaluacion(evaluacion.id);
+  if (error){ alert(error.message); return; }
+  location.href = `resultados.html?eval=${evaluacion.id}`;
+}
+
+function suscribirTiempoReal(){
+  channelRespuestas = SkopeoDB.suscribirRespuestas(evaluacion.id, (payload) => {
+    const r = payload.new;
+    const pregActual = preguntas.find(p => p.orden === evaluacion.pregunta_actual_orden);
+    if (pregActual && r.pregunta_id === pregActual.id){
+      respuestasPreguntaActual.set(r.estudiante_id, r.respuesta_elegida);
+      renderStudents();
+    }
+  });
+
+  channelEvaluacion = SkopeoDB.suscribirEvaluacion(evaluacion.id, (payload) => {
+    // Por si se avanza de pregunta desde otra pestaña/dispositivo
+    evaluacion = payload.new;
+    renderEstado();
+  });
+}
+
+window.addEventListener('beforeunload', () => {
+  SkopeoDB.desuscribir(channelRespuestas);
+  SkopeoDB.desuscribir(channelEvaluacion);
+});
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

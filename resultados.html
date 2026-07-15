@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resultados · Skopeo</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0;}
+  .summary-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+  .summary-card .num{font-size:26px;font-weight:800;color:var(--accent);}
+  .summary-card .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+
+  .qbar-row{margin-bottom:10px;}
+  .qbar-row .qtext{font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .qbar-track{height:10px;background:var(--panel-2);border-radius:6px;overflow:hidden;}
+  .qbar-fill{height:100%;background:var(--accent);}
+
+  .export-actions{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap;}
+
+  tr.correcta td.ans{color:var(--accent);}
+  tr.incorrecta td.ans{color:var(--danger);}
+
+  select#pickCurso, select#pickEval{min-width:200px;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Skop<span>eo</span> · Resultados</h1>
+  <nav>
+    <a href="index.html">Inicio</a>
+    <a href="gestion.html">Gestión</a>
+    <a href="presentar.html">Presentar</a>
+    <a href="resultados.html" class="active">Resultados</a>
+  </nav>
+</div>
+
+<div class="container">
+
+  <div class="card" id="pickerCard" style="display:none;margin-bottom:18px;">
+    <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <div class="field" style="flex:1;min-width:180px;margin-bottom:0;">
+        <label>Curso</label>
+        <select id="pickCurso"></select>
+      </div>
+      <div class="field" style="flex:1;min-width:180px;margin-bottom:0;">
+        <label>Evaluación</label>
+        <select id="pickEval"></select>
+      </div>
+      <button class="btn" id="verBtn">Ver resultados</button>
+    </div>
+  </div>
+
+  <div id="loadingState" class="muted" style="padding:40px 0;text-align:center;">Cargando…</div>
+
+  <div id="content" style="display:none;">
+    <h2 id="tituloEval" style="margin-bottom:2px;"></h2>
+    <p class="muted" id="metaEval" style="margin-top:0;font-size:13px;"></p>
+
+    <div class="summary-cards">
+      <div class="summary-card"><div class="num" id="sumPromedio">-</div><div class="lbl">Promedio del curso</div></div>
+      <div class="summary-card"><div class="num" id="sumPreguntas">-</div><div class="lbl">Preguntas</div></div>
+      <div class="summary-card"><div class="num" id="sumEstudiantes">-</div><div class="lbl">Estudiantes</div></div>
+      <div class="summary-card"><div class="num" id="sumParticipacion">-</div><div class="lbl">Participación</div></div>
+    </div>
+
+    <div class="export-actions">
+      <button class="btn" id="exportCsvBtn">⬇ Exportar CSV</button>
+      <button class="btn-outline btn" id="exportTxtBtn">⬇ Exportar TXT</button>
+    </div>
+
+    <div class="card" style="margin-bottom:18px;">
+      <h3 style="margin-top:0;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">% de aciertos por pregunta</h3>
+      <div id="qbars"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Detalle por estudiante</h3>
+      <div style="overflow-x:auto;">
+        <table id="tablaEstudiantes"></table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/credits.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/db.js"></script>
+<script src="js/export.js"></script>
+<script>
+let evaluacion, preguntas, estudiantes, respuestas;
+
+function getEvalIdFromUrl(){
+  return new URLSearchParams(location.search).get('eval');
+}
+
+async function init(){
+  const evalId = getEvalIdFromUrl();
+  if (evalId){
+    await cargarResultados(evalId);
+  } else {
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('pickerCard').style.display = 'block';
+    await inicializarPicker();
+  }
+}
+
+async function inicializarPicker(){
+  const { data: cursos } = await SkopeoDB.getCursos();
+  const cursoSel = document.getElementById('pickCurso');
+  cursoSel.innerHTML = (cursos || []).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+  if (cursoSel.value) await cargarEvalsDelCurso(cursoSel.value);
+  cursoSel.addEventListener('change', () => cargarEvalsDelCurso(cursoSel.value));
+  document.getElementById('verBtn').addEventListener('click', () => {
+    const evalSel = document.getElementById('pickEval');
+    if (evalSel.value) location.href = `resultados.html?eval=${evalSel.value}`;
+  });
+}
+
+async function cargarEvalsDelCurso(cursoId){
+  const { data } = await SkopeoDB.getEvaluaciones(cursoId);
+  const evalSel = document.getElementById('pickEval');
+  const finalizadas = (data || []).filter(e => e.estado !== 'pendiente');
+  evalSel.innerHTML = finalizadas.map(e =>
+    `<option value="${e.id}">${escapeHtml(e.titulo)} ${e.estado === 'en_curso' ? '(en curso)' : ''}</option>`
+  ).join('');
+}
+
+async function cargarResultados(evalId){
+  const [evRes, pregRes, respRes] = await Promise.all([
+    SkopeoDB.getEvaluacion(evalId),
+    SkopeoDB.getPreguntas(evalId),
+    SkopeoDB.getRespuestasDeEvaluacion(evalId),
+  ]);
+
+  if (evRes.error){
+    document.getElementById('loadingState').textContent = 'Error: ' + evRes.error.message;
+    return;
+  }
+
+  evaluacion = evRes.data;
+  preguntas = (pregRes.data || []).sort((a,b) => a.orden - b.orden);
+  respuestas = respRes.data || [];
+
+  const estRes = await SkopeoDB.getEstudiantes(evaluacion.curso_id);
+  estudiantes = estRes.data || [];
+
+  render();
+}
+
+function render(){
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+
+  document.getElementById('tituloEval').textContent = evaluacion.titulo;
+  document.getElementById('metaEval').textContent =
+    `${new Date(evaluacion.finalizada_en || evaluacion.creada_en).toLocaleString('es-BO')} · ${evaluacion.estado === 'finalizada' ? 'Finalizada' : 'En curso'}`;
+
+  const matriz = SkopeoExport.construirMatriz(estudiantes, preguntas, respuestas);
+  const promedio = matriz.length > 0
+    ? (matriz.reduce((s,f) => s + parseFloat(f.nota), 0) / matriz.length).toFixed(1)
+    : '0.0';
+
+  document.getElementById('sumPromedio').textContent = promedio + '%';
+  document.getElementById('sumPreguntas').textContent = preguntas.length;
+  document.getElementById('sumEstudiantes').textContent = estudiantes.length;
+
+  const participaron = new Set(respuestas.map(r => r.estudiante_id)).size;
+  document.getElementById('sumParticipacion').textContent =
+    estudiantes.length > 0 ? `${Math.round((participaron / estudiantes.length) * 100)}%` : '0%';
+
+  // barras por pregunta
+  const qbars = document.getElementById('qbars');
+  qbars.innerHTML = preguntas.map(p => {
+    const respPreg = respuestas.filter(r => r.pregunta_id === p.id);
+    const correctas = respPreg.filter(r => r.es_correcta).length;
+    const pct = respPreg.length > 0 ? Math.round((correctas / respPreg.length) * 100) : 0;
+    return `
+      <div class="qbar-row">
+        <div class="qtext">P${p.orden}. ${escapeHtml(p.texto)} — ${pct}% (${correctas}/${respPreg.length || estudiantes.length})</div>
+        <div class="qbar-track"><div class="qbar-fill" style="width:${pct}%;"></div></div>
+      </div>`;
+  }).join('');
+
+  // tabla por estudiante
+  const tabla = document.getElementById('tablaEstudiantes');
+  const headCols = preguntas.map(p => `<th>P${p.orden}</th>`).join('');
+  const bodyRows = matriz.map(f => `
+    <tr>
+      <td>${f.numero}</td>
+      <td>${escapeHtml(f.nombre)}</td>
+      ${f.columnas.map(c => `<td class="mono">${c}</td>`).join('')}
+      <td>${f.correctas}/${f.total}</td>
+      <td><b>${f.nota}%</b></td>
+    </tr>`).join('');
+  tabla.innerHTML = `
+    <thead><tr><th>N°</th><th>Estudiante</th>${headCols}<th>Correctas</th><th>Nota</th></tr></thead>
+    <tbody>${bodyRows}</tbody>`;
+}
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  SkopeoExport.exportarCSV(evaluacion, estudiantes, preguntas, respuestas);
+});
+document.getElementById('exportTxtBtn').addEventListener('click', () => {
+  SkopeoExport.exportarTXT(evaluacion, estudiantes, preguntas, respuestas);
+});
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Escanear · Skopeo</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  html, body{height:100%;overflow:hidden;}
+  #app{display:flex;flex-direction:column;height:100vh;height:100dvh;}
+
+  .screen{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:24px;text-align:center;gap:16px;overflow-y:auto;
+  }
+  .screen h2{font-size:18px;margin:0;}
+  .screen p{color:var(--muted);font-size:13px;max-width:320px;line-height:1.5;margin:0;}
+
+  .confirm-box{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:20px;width:100%;max-width:340px;text-align:left;
+  }
+  .confirm-box .curso{font-size:12px;color:var(--muted);}
+  .confirm-box .titulo{font-size:17px;font-weight:700;margin:4px 0 8px;}
+  .confirm-box .pregunta{font-size:13px;color:var(--accent);font-family:var(--mono);}
+  .confirm-actions{display:flex;gap:10px;margin-top:16px;}
+  .confirm-actions button{flex:1;justify-content:center;}
+
+  /* -------- pantalla de escaneo -------- */
+  #scanScreen{display:none;flex:1;flex-direction:column;padding:0;}
+  .scan-header{
+    padding:10px 14px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+  }
+  .scan-header .q-info{font-size:12px;}
+  .scan-header .q-info b{display:block;font-size:14px;}
+  .scan-header .counter{font-family:var(--mono);font-size:12px;color:var(--accent);}
+
+  .camera-stage{
+    position:relative;flex:1;min-height:0;background:#000;
+    display:none;align-items:center;justify-content:center;
+  }
+  .camera-stage.active{display:flex;}
+  video, canvas.overlay{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;}
+  canvas.overlay{pointer-events:none;}
+
+  .idle-stage{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;
+  }
+  .big-scan-btn{
+    background:var(--accent);color:var(--accent-strong);border:none;border-radius:50%;
+    width:120px;height:120px;font-size:15px;font-weight:800;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.3;
+  }
+  .big-scan-btn:active{transform:scale(0.96);}
+  .stop-btn{
+    position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:6;
+    background:var(--danger);color:#fff;border:none;border-radius:24px;
+    padding:12px 24px;font-size:14px;font-weight:700;
+  }
+
+  .feed{
+    flex-shrink:0;background:var(--panel);border-top:1px solid var(--line);
+    max-height:34vh;overflow-y:auto;padding:10px 12px;
+  }
+  .feed-row{
+    display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:13px;
+  }
+  .feed-row .letter{
+    width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:13px;background:var(--accent-dim);color:var(--accent);flex-shrink:0;
+  }
+  .feed-row.correcta .letter{background:var(--accent-dim);color:var(--accent);}
+  .feed-empty{color:var(--muted);font-size:12px;text-align:center;padding:8px;}
+
+  #finalizadaScreen{display:none;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="loadingScreen" class="screen">
+    <h2>Conectando…</h2>
+    <p>Buscando la evaluación activa.</p>
+  </div>
+
+  <div id="noActiveScreen" class="screen" style="display:none;">
+    <h2>Sin evaluación en curso</h2>
+    <p>Ve a Gestión y presiona "Iniciar LIVE" en la evaluación que quieras aplicar, o espera a que el profesor la inicie desde la PC.</p>
+    <button class="btn-outline btn" onclick="location.reload()">Reintentar</button>
+    <a href="index.html" class="btn-ghost btn" style="text-decoration:none;">Volver al inicio</a>
+  </div>
+
+  <div id="confirmScreen" class="screen" style="display:none;">
+    <h2>Confirma antes de escanear</h2>
+    <div class="confirm-box">
+      <div class="curso" id="confirmCurso"></div>
+      <div class="titulo" id="confirmTitulo"></div>
+      <div class="pregunta" id="confirmPregunta"></div>
+    </div>
+    <div class="confirm-actions" style="width:100%;max-width:340px;">
+      <button class="btn-ghost btn" onclick="location.href='index.html'">Cancelar</button>
+      <button class="btn" id="confirmarBtn">Confirmar y continuar</button>
+    </div>
+  </div>
+
+  <div id="finalizadaScreen" class="screen">
+    <h2>✅ Evaluación finalizada</h2>
+    <p>Ya no se pueden registrar más respuestas.</p>
+    <a href="resultados.html" class="btn" style="text-decoration:none;">Ver resultados</a>
+  </div>
+
+  <div id="scanScreen">
+    <div class="scan-header">
+      <div class="q-info">
+        <span id="scanCurso" class="muted" style="font-size:11px;"></span>
+        <b id="scanPreguntaLabel"></b>
+      </div>
+      <div class="counter" id="scanCounter">0 / 0</div>
+    </div>
+
+    <div class="idle-stage" id="idleStage">
+      <button class="big-scan-btn" id="startScanBtn">📷<br>Escanear<br>respuestas</button>
+      <p class="muted" style="font-size:12px;">La cámara solo se activa mientras escaneas — se apaga automáticamente al detener.</p>
+    </div>
+
+    <div class="camera-stage" id="cameraStage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay" class="overlay"></canvas>
+      <button class="stop-btn" id="stopScanBtn">Detener escaneo</button>
+    </div>
+
+    <div class="feed" id="feed">
+      <div class="feed-empty">Sin respuestas registradas en esta pregunta todavía.</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/credits.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/db.js"></script>
+<script src="lib/cv.js"></script>
+<script src="lib/svd.js"></script>
+<script src="lib/aruco.js"></script>
+<script src="lib/dictionaries/aruco_mip_36h12.js"></script>
+<script>
+/* ============================================================
+   SKOPEO — Escáner (celular)
+   ============================================================ */
+
+const ANGLE_TO_LETTER = { 0: 'A', 90: 'B', 180: 'C', 270: 'D' };
+
+let evaluacion = null;
+let curso = null;
+let preguntas = [];
+let estudiantes = [];
+let estudiantesPorNumero = new Map(); // numero -> estudiante (numero = arucoId + 1)
+let preguntaActual = null;
+let channelEvaluacion = null;
+
+let detector = null;
+let workCanvas, workCtx, video, overlay, ctx;
+let scanning = false;
+let stream = null;
+
+let stability = {};       // arucoId -> { letter, count }
+let yaEnviados = new Set(); // estudiante_id ya registrado en la pregunta actual
+let lastRenderSignature = '';
+
+// ---------------- CARGA INICIAL ----------------
+
+async function init(){
+  const { data: ev, error } = await SkopeoDB.getEvaluacionActiva();
+
+  if (error || !ev){
+    show('noActiveScreen');
+    return;
+  }
+
+  evaluacion = ev;
+
+  const [cursosRes, pregRes, estRes] = await Promise.all([
+    SkopeoDB.getCursos(),
+    SkopeoDB.getPreguntas(evaluacion.id),
+    SkopeoDB.getEstudiantes(evaluacion.curso_id),
+  ]);
+
+  curso = (cursosRes.data || []).find(c => c.id === evaluacion.curso_id);
+  preguntas = pregRes.data || [];
+  estudiantes = estRes.data || [];
+  estudiantesPorNumero = new Map(estudiantes.map(e => [e.numero, e]));
+
+  actualizarPreguntaActual();
+  mostrarConfirmacion();
+  suscribirCambiosEvaluacion();
+}
+
+function actualizarPreguntaActual(){
+  preguntaActual = preguntas.find(p => p.orden === evaluacion.pregunta_actual_orden) || null;
+}
+
+function mostrarConfirmacion(){
+  document.getElementById('confirmCurso').textContent = curso ? curso.nombre : '';
+  document.getElementById('confirmTitulo').textContent = evaluacion.titulo;
+  document.getElementById('confirmPregunta').textContent = preguntaActual
+    ? `Pregunta ${preguntaActual.orden} de ${preguntas.length}`
+    : 'Esperando que el profesor inicie la primera pregunta…';
+  show('confirmScreen');
+}
+
+document.getElementById('confirmarBtn').addEventListener('click', () => {
+  show('scanScreen');
+  renderScanHeader();
+});
+
+function suscribirCambiosEvaluacion(){
+  channelEvaluacion = SkopeoDB.suscribirEvaluacion(evaluacion.id, (payload) => {
+    const anterior = evaluacion.pregunta_actual_orden;
+    evaluacion = payload.new;
+
+    if (evaluacion.estado === 'finalizada'){
+      detenerCamara();
+      show('finalizadaScreen');
+      return;
+    }
+
+    if (evaluacion.pregunta_actual_orden !== anterior){
+      // Nueva pregunta: se detiene el escaneo automáticamente (control manual)
+      // y se limpian los registros locales de la pregunta anterior.
+      detenerCamara();
+      actualizarPreguntaActual();
+      yaEnviados = new Set();
+      stability = {};
+      renderScanHeader();
+      renderFeed();
+    }
+  });
+}
+
+// ---------------- UI helpers ----------------
+
+function show(id){
+  ['loadingScreen','noActiveScreen','confirmScreen','finalizadaScreen','scanScreen'].forEach(s => {
+    document.getElementById(s).style.display = (s === id) ? 'flex' : 'none';
+  });
+}
+
+function renderScanHeader(){
+  document.getElementById('scanCurso').textContent = curso ? curso.nombre : '';
+  document.getElementById('scanPreguntaLabel').textContent = preguntaActual
+    ? `Pregunta ${preguntaActual.orden} de ${preguntas.length}`
+    : 'Esperando pregunta…';
+  document.getElementById('scanCounter').textContent = `${yaEnviados.size} / ${estudiantes.length}`;
+}
+
+function renderFeed(){
+  const feed = document.getElementById('feed');
+  const ids = [...yaEnviados];
+  if (ids.length === 0){
+    feed.innerHTML = '<div class="feed-empty">Sin respuestas registradas en esta pregunta todavía.</div>';
+    return;
+  }
+  // dibuja del más reciente al más antiguo
+  feed.innerHTML = ids.slice().reverse().map(estId => {
+    const est = estudiantes.find(e => e.id === estId);
+    const letra = est ? est._ultimaLetra : '?';
+    return `
+      <div class="feed-row">
+        <div class="letter">${letra}</div>
+        <div>N°${est ? est.numero : '?'} ${est ? escapeHtml(est.nombre) : ''}</div>
+      </div>`;
+  }).join('');
+}
+
+// ---------------- CÁMARA + DETECCIÓN ----------------
+
+video = document.getElementById('video');
+overlay = document.getElementById('overlay');
+ctx = overlay.getContext('2d');
+
+document.getElementById('startScanBtn').addEventListener('click', iniciarCamara);
+document.getElementById('stopScanBtn').addEventListener('click', detenerCamara);
+
+async function iniciarCamara(){
+  if (!preguntaActual){
+    alert('Todavía no hay una pregunta activa. Espera a que el profesor la muestre en la PC.');
+    return;
+  }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    workCanvas = document.createElement('canvas');
+    workCanvas.width = SKOPEO_CONFIG.ARUCO_DETECTION_WIDTH;
+    workCanvas.height = SKOPEO_CONFIG.ARUCO_DETECTION_HEIGHT;
+    workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
+
+    overlay.width = SKOPEO_CONFIG.ARUCO_DETECTION_WIDTH;
+    overlay.height = SKOPEO_CONFIG.ARUCO_DETECTION_HEIGHT;
+
+    detector = new AR.Detector({
+      dictionaryName: 'ARUCO_MIP_36h12',
+      maxHammingDistance: SKOPEO_CONFIG.ARUCO_MAX_HAMMING_DISTANCE,
+    });
+
+    document.getElementById('idleStage').style.display = 'none';
+    document.getElementById('cameraStage').classList.add('active');
+    scanning = true;
+    requestAnimationFrame(loop);
+  }catch(err){
+    alert('No se pudo activar la cámara: ' + err.message);
+  }
+}
+
+function detenerCamara(){
+  scanning = false;
+  if (stream){
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  document.getElementById('idleStage').style.display = 'flex';
+  document.getElementById('cameraStage').classList.remove('active');
+}
+
+function loop(){
+  if (!scanning) return;
+
+  workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+  const imageData = workCtx.getImageData(0, 0, workCanvas.width, workCanvas.height);
+  const rawMarkers = detector.detect(imageData);
+
+  // solo IDs que corresponden a un estudiante real de este curso (numero = id+1)
+  const markers = rawMarkers.filter(m => estudiantesPorNumero.has(m.id + 1));
+
+  procesarMarcadores(markers);
+  dibujarOverlay(markers);
+
+  requestAnimationFrame(loop);
+}
+
+function angleOfVector(dx, dy){
+  let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+  if (deg < 0) deg += 360;
+  return deg;
+}
+function nearestQuadrant(deg){
+  return Math.round(deg / 90) * 90 % 360;
+}
+
+function procesarMarcadores(markers){
+  markers.forEach(m => {
+    const numero = m.id + 1;
+    const estudiante = estudiantesPorNumero.get(numero);
+    if (!estudiante || yaEnviados.has(estudiante.id)) return; // ya registrado, no se reprocesa
+
+    const c = m.corners;
+    const dx = c[1].x - c[0].x;
+    const dy = c[1].y - c[0].y;
+    const quadrant = nearestQuadrant(angleOfVector(dx, dy));
+    const letter = ANGLE_TO_LETTER[quadrant];
+
+    if (!stability[m.id]) stability[m.id] = { letter: null, count: 0 };
+    const st = stability[m.id];
+
+    if (st.letter === letter) st.count++;
+    else { st.letter = letter; st.count = 1; }
+
+    if (st.count >= SKOPEO_CONFIG.ARUCO_STABILITY_FRAMES){
+      registrarRespuesta(estudiante, letter);
+    }
+  });
+}
+
+async function registrarRespuesta(estudiante, letra){
+  // Bloqueo local inmediato para no disparar el registro varias veces
+  // mientras la escritura a la base de datos está en camino.
+  yaEnviados.add(estudiante.id);
+  estudiante._ultimaLetra = letra;
+  renderScanHeader();
+  renderFeed();
+
+  const esCorrecta = letra === preguntaActual.respuesta_correcta;
+  const { error, duplicate } = await SkopeoDB.registrarRespuesta(
+    evaluacion.id, preguntaActual.id, estudiante.id, letra, esCorrecta
+  );
+
+  if (error && !duplicate){
+    // Revertimos el bloqueo local para poder reintentar
+    yaEnviados.delete(estudiante.id);
+    console.error('Error registrando respuesta:', error.message);
+    renderScanHeader();
+    renderFeed();
+  }
+}
+
+function dibujarOverlay(markers){
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.lineWidth = 3;
+  ctx.font = '14px monospace';
+
+  markers.forEach(m => {
+    const numero = m.id + 1;
+    const estudiante = estudiantesPorNumero.get(numero);
+    const registrado = estudiante && yaEnviados.has(estudiante.id);
+    const color = registrado ? '#4fd1a5' : '#e0a63e';
+
+    const c = m.corners;
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(c[0].x, c[0].y);
+    for (let i = 1; i < c.length; i++) ctx.lineTo(c[i].x, c[i].y);
+    ctx.closePath();
+    ctx.stroke();
+
+    let cx = 0, cy = 0;
+    c.forEach(p => { cx += p.x; cy += p.y; });
+    cx /= c.length; cy /= c.length;
+
+    ctx.fillStyle = color;
+    ctx.fillText(`N°${numero}${registrado ? ' ✓' : ''}`, cx - 20, cy);
+  });
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+window.addEventListener('beforeunload', () => {
+  detenerCamara();
+  SkopeoDB.desuscribir(channelEvaluacion);
+});
+
+init();
+</script>
+</body>
+</html>
