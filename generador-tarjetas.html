@@ -41,43 +41,53 @@
     display:grid;
     grid-template-columns:repeat(auto-fill, minmax(180px, 220px));
     gap:16px;
+    justify-content:center;
   }
   .card{
     border:1px dashed #3a4552;
     border-radius:6px;
-    padding:10px 8px 8px;
-    display:grid;
-    grid-template-columns:14px 1fr 14px;
-    grid-template-rows:16px 1fr 14px;
-    gap:1px;
-    aspect-ratio:1/1.08;
+    padding:12px 30px 10px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
     background:#fff;
     color:#000;
   }
   .card .num{
-    grid-column:1/4; grid-row:1;
-    text-align:center;font-weight:800;font-size:13px;color:#000;
-    letter-spacing:.03em;
+    font-weight:800;font-size:13px;color:#000;
+    letter-spacing:.03em;margin-bottom:6px;
   }
+
+  /* El marcador y sus 4 letras viven en el MISMO contenedor cuadrado,
+     con las letras ancladas por posición absoluta a los bordes del
+     propio marcador — así es imposible que queden "lejos" del QR,
+     sin importar qué tan grande se renderice la tarjeta en cada pantalla. */
+  .marker-frame{
+    position:relative;
+    width:100%;
+    max-width:210px;
+    aspect-ratio:1;
+    margin:18px 0;
+  }
+  .marker-frame svg{width:100%;height:100%;display:block;}
+
   /* Letras discretas a propósito: deben ser casi invisibles a distancia
      para que nadie pueda "leer" la respuesta de otro estudiante mirando
      su tarjeta — solo sirven de referencia para quien la sostiene de cerca. */
   .lbl{
+    position:absolute;
+    font-weight:600;font-size:11px;color:#4a4a4a;
     display:flex;align-items:center;justify-content:center;
-    font-weight:600;font-size:10px;color:#4a4a4a;
   }
-  .top{grid-column:2;grid-row:1;align-self:end;}
-  .left{grid-column:1;grid-row:2;}
-  .right{grid-column:3;grid-row:2;}
-  .bottom{grid-column:2;grid-row:3;align-self:start;}
-  .marker{grid-column:2;grid-row:2;padding:1px;}
-  .marker svg{width:100%;height:100%;display:block;}
+  .lbl.top{top:-15px;left:0;right:0;text-align:center;}
+  .lbl.bottom{bottom:-15px;left:0;right:0;text-align:center;}
+  .lbl.left{left:-15px;top:0;bottom:0;}
+  .lbl.right{right:-15px;top:0;bottom:0;}
+
   .footname{
-    grid-column:1/4;grid-row:3;
-    text-align:center;font-size:8px;color:#999;align-self:end;
+    text-align:center;font-size:8px;color:#999;margin-top:8px;
     letter-spacing:.04em;font-weight:600;
   }
-
 
   @media print{
     #controls{display:none;}
@@ -101,7 +111,7 @@
     <button id="genBtn">Generar tarjetas</button>
     <button id="printBtn">Imprimir / Guardar PDF</button>
     <div id="note">
-      <b>Importante — calibración pendiente:</b> las letras A/B/C/D en cada tarjeta están ubicadas como referencia visual (A=arriba, B=derecha, C=abajo, D=izquierda, en la orientación impresa). Antes de usar esto en una evaluación real, hay que confirmar con el POC del escáner (<code>poc-scanner.html</code>) que el ángulo detectado por la cámara coincide con esta disposición — la cámara puede "ver" la rotación al revés según cómo la sostenga el estudiante. Es un ajuste de una sola línea de código una vez calibrado, y después es igual para las 50 tarjetas porque todas comparten el mismo diseño.
+      <b>Importante — calibración pendiente:</b> las letras A/B/C/D en cada tarjeta están ubicadas como referencia visual (A=arriba, B=derecha, C=abajo, D=izquierda, en la orientación impresa). Antes de usar esto en una evaluación real, confirma primero con una prueba de escaneo en vivo (menú principal → Herramientas adicionales → Diagnóstico de cámara) que el ángulo detectado por la cámara coincide con esta disposición — la cámara puede "ver" la rotación al revés según cómo la sostenga el estudiante. Es un ajuste de una sola línea de código una vez calibrado, y después es igual para todas las tarjetas porque comparten el mismo diseño. Recomendación: imprime 2-3 tarjetas de prueba antes de imprimir el lote completo, para confirmar que el tamaño y la nitidez del marcador se ven bien en papel.
     </div>
   </div>
 
@@ -128,11 +138,13 @@
         card.className = 'card';
         card.innerHTML = `
           <div class="num">N° ${id + 1}</div>
-          <div class="lbl top">A</div>
-          <div class="lbl left">D</div>
-          <div class="marker">${svg}</div>
-          <div class="lbl right">B</div>
-          <div class="lbl bottom">C</div>
+          <div class="marker-frame">
+            ${svg}
+            <div class="lbl top">A</div>
+            <div class="lbl left">D</div>
+            <div class="lbl right">B</div>
+            <div class="lbl bottom">C</div>
+          </div>
           <div class="footname">SKOPEO · Kabert EduLab</div>
         `;
         sheet.appendChild(card);
