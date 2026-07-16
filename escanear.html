@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Escanear · Skopeo</title>
+<link rel="manifest" href="manifest-escanear.json">
+<meta name="theme-color" content="#06080a">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="css/styles.css">
 <style>
   html, body{height:100%;overflow:hidden;}
@@ -69,9 +72,12 @@
   }
   .feed-row .letter{
     width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;
-    font-weight:800;font-size:13px;background:var(--accent-dim);color:var(--accent);flex-shrink:0;
+    font-weight:800;font-size:13px;flex-shrink:0;
   }
+  .feed-row.correcta{border-color:rgba(79,209,165,0.4);background:rgba(79,209,165,0.08);}
   .feed-row.correcta .letter{background:var(--accent-dim);color:var(--accent);}
+  .feed-row.incorrecta{border-color:rgba(255,91,91,0.4);background:rgba(255,91,91,0.08);}
+  .feed-row.incorrecta .letter{background:var(--danger-dim);color:var(--danger);}
   .feed-empty{color:var(--muted);font-size:12px;text-align:center;padding:8px;}
 
   #finalizadaScreen{display:none;}
@@ -81,7 +87,10 @@
 <div id="app">
 
   <div id="loadingScreen" class="screen">
-    <h2>Conectando…</h2>
+    <div class="skopeo-loader" style="padding:0;">
+      <div class="ring"></div>
+      <div class="label">Conectando</div>
+    </div>
     <p>Buscando la evaluación activa.</p>
   </div>
 
@@ -269,8 +278,10 @@ function renderFeed(){
   feed.innerHTML = ids.slice().reverse().map(estId => {
     const est = estudiantes.find(e => e.id === estId);
     const letra = est ? est._ultimaLetra : '?';
+    const correcta = est ? est._correcta : null;
+    const claseFila = correcta === true ? 'correcta' : (correcta === false ? 'incorrecta' : '');
     return `
-      <div class="feed-row">
+      <div class="feed-row ${claseFila}">
         <div class="letter">${letra}</div>
         <div>N°${est ? est.numero : '?'} ${est ? escapeHtml(est.nombre) : ''}</div>
       </div>`;
@@ -385,10 +396,11 @@ async function registrarRespuesta(estudiante, letra){
   // mientras la escritura a la base de datos está en camino.
   yaEnviados.add(estudiante.id);
   estudiante._ultimaLetra = letra;
+  estudiante._correcta = letra === preguntaActual.respuesta_correcta;
   renderScanHeader();
   renderFeed();
 
-  const esCorrecta = letra === preguntaActual.respuesta_correcta;
+  const esCorrecta = estudiante._correcta;
   const { error, duplicate } = await SkopeoDB.registrarRespuesta(
     evaluacion.id, preguntaActual.id, estudiante.id, letra, esCorrecta
   );
@@ -411,7 +423,13 @@ function dibujarOverlay(markers){
     const numero = m.id + 1;
     const estudiante = estudiantesPorNumero.get(numero);
     const registrado = estudiante && yaEnviados.has(estudiante.id);
-    const color = registrado ? '#4fd1a5' : '#e0a63e';
+
+    let color = '#e0a63e'; // amarillo: todavía leyendo, no confirmado
+    let etiqueta = `N°${numero}`;
+    if (registrado){
+      color = estudiante._correcta ? '#4fd1a5' : '#ff5b5b'; // verde correcta / rojo incorrecta
+      etiqueta = `N°${numero} ${estudiante._correcta ? 'OK' : 'X'}`;
+    }
 
     const c = m.corners;
     ctx.strokeStyle = color;
@@ -426,7 +444,7 @@ function dibujarOverlay(markers){
     cx /= c.length; cy /= c.length;
 
     ctx.fillStyle = color;
-    ctx.fillText(`N°${numero}${registrado ? ' ✓' : ''}`, cx - 20, cy);
+    ctx.fillText(etiqueta, cx - 20, cy);
   });
 }
 
@@ -440,6 +458,12 @@ window.addEventListener('beforeunload', () => {
   detenerCamara();
   SkopeoDB.desuscribir(channelEvaluacion);
 });
+
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 
 init();
 </script>
